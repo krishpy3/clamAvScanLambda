@@ -91,12 +91,14 @@ def upload_defs_to_s3(s3_client, bucket, prefix, local_path):
                         % (local_file_path, os.path.join(bucket, prefix, filename))
                     )
                     s3 = boto3.resource("s3", endpoint_url=S3_ENDPOINT)
-                    s3_object = s3.Object(bucket, os.path.join(prefix, filename))
+                    s3_object = s3.Object(
+                        bucket, os.path.join(prefix, filename))
                     s3_object.upload_file(os.path.join(local_path, filename))
                     s3_client.put_object_tagging(
                         Bucket=s3_object.bucket_name,
                         Key=s3_object.key,
-                        Tagging={"TagSet": [{"Key": "md5", "Value": local_file_md5}]},
+                        Tagging={"TagSet": [
+                            {"Key": "md5", "Value": local_file_md5}]},
                     )
                 else:
                     print(
@@ -119,7 +121,7 @@ def update_defs_from_freshclam(path, library_path=""):
     fc_proc = subprocess.Popen(
         [
             FRESHCLAM_PATH,
-            "--config-file=./bin/freshclam.conf",
+            "--config-file=/opt/python/bin/freshclam.conf",
             "-u %s" % pwd.getpwuid(os.getuid())[0],
             "--datadir=%s" % path,
         ],
