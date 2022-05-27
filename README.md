@@ -8,6 +8,7 @@
 docker build -t clanav:latest .
 mkdir -p ./build/
 docker run -v $(full_path)/build:/opt/mount --rm --entrypoint cp clanav:latest /opt/app/build/lambda.zip /opt/mount/lambda.zip
+docker run -v $(pwd)/build:/opt/mount --rm --entrypoint cp clanav:latest /opt/app/build/lambda.zip /opt/mount/lambda.zip
 ```
 
 ### Upload Lambda Layers

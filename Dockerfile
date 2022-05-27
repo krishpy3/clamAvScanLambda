@@ -7,7 +7,7 @@ RUN mkdir -p /opt/app/bin/
 
 # Copy in the lambda source
 WORKDIR /opt/app
-COPY ./*.py /opt/app/
+# COPY ./*.py /opt/app/
 COPY requirements.txt /opt/app/requirements.txt
 
 # Install packages
@@ -43,7 +43,7 @@ RUN echo "CompressLocalDatabase yes" >> /opt/app/bin/freshclam.conf
 # Create the zip file
 WORKDIR /opt/app
 RUN mkdir python
-RUN mv bin/ *.py python/
+RUN mv bin/ python/
 RUN mv /usr/local/lib/python3.7/site-packages/* python/
 RUN zip -r9 /opt/app/build/lambda.zip python/
 

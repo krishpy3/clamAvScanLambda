@@ -17,27 +17,8 @@ resource "aws_s3_bucket_public_access_block" "blockPublicAccess" {
   restrict_public_buckets = true
 }
 
-# resource "aws_s3_bucket_policy" "BucketPolicy" {
-#   bucket = aws_s3_bucket.S3BucketAVDatabase.bucket
-#   policy = <<POLICY
-# {
-#   "Version": "2012-10-17",
-#   "Statement": [
-#     {
-#       "Principal": "*",
-#       "Action": "s3:Get*",
-#       "Resource": [
-#         "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}/*"
-#       ],
-#       "Effect": "Allow"
-#     }
-#   ]
-# }
-# POLICY
-# }
-
-resource "aws_iam_role" "avScannerRole" {
-  name = "avScannerRole"
+resource "aws_iam_role" "avRole" {
+  name = "avRole"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -69,25 +50,25 @@ resource "aws_iam_role" "avScannerRole" {
           Resource = "*"
         },
         {
-          Sid      = "S3PermissionSourceBucket"
+          Sid      = "S3ReadWritePermissions"
           Effect   = "Allow"
           Action   = [
-            "s3:GetObject",
-            "s3:GetObjectTagging",
-            "s3:GetObjectVersion",
-            "s3:PutObjectTagging",
-            "s3:PutObjectVersionTagging"
+            "s3:GetObject*",
+            "s3:PutObject*"
           ]
-          Resource = "arn:aws:s3:::${var.source_bucket}/*"
+          Resource = [
+            "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}/*",
+            "arn:aws:s3:::${var.source_bucket}/*",
+            "arn:aws:s3:::${var.prod_bucket}/*"
+          ]
         },
         {
-          Sid      = "S3PermissionAVBucket"
+          Sid      = "S3DeletePermissions"
           Effect   = "Allow"
           Action   = [
-            "s3:GetObject",
-            "s3:GetObjectTagging"
+            "s3:Delete*",
           ]
-          Resource = "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}/*"
+          Resource = "arn:aws:s3:::${var.source_bucket}/*"
         },
         {
           Sid      = "KmsDecrypt"
@@ -109,70 +90,14 @@ resource "aws_iam_role" "avScannerRole" {
             "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}",
             "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}/*"
           ]
-        }
-      ]
-    })
-  }
-
-  tags = {
-    Name = "avScanProject"
-  }
-}
-
-resource "aws_iam_role" "avDBUpdateRole" {
-  name = "avDBUpdateRole"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Sid    = ""
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-      },
-    ]
-  })
-
-  inline_policy {
-    name = "DBUpdatePolicy"
-
-    policy = jsonencode({
-      Version = "2012-10-17"
-      Statement = [
+        },
         {
-          Sid      = "CloudWatchLogs"
+          Sid      = "SNS"
           Effect   = "Allow"
           Action   = [
-            "logs:CreateLogGroup",
-            "logs:CreateLogStream",
-            "logs:PutLogEvents"
+            "sns:Publish"
           ]
           Resource = "*"
-        },
-        {
-          Sid      = "S3Permissions"
-          Effect   = "Allow"
-          Action   = [
-            "s3:GetObject",
-            "s3:GetObjectTagging",
-            "s3:PutObject",
-            "s3:PutObjectTagging",
-            "s3:PutObjectVersionTagging"
-          ]
-          Resource = "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}/*"
-        },
-        {
-          Sid      = "S3HeadPermissions"
-          Effect   = "Allow"
-          Action   = [
-            "s3:ListBucket"
-          ]
-          Resource = [
-            "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}",
-            "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}/*"
-          ]
         }
       ]
     })
