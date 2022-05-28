@@ -22,7 +22,7 @@ resource "aws_lambda_permission" "s3InvokePermission" {
 resource "aws_cloudwatch_event_rule" "av_update" {
   description           = "Update AntiVirus"
   schedule_expression   = var.cron_entry
-  is_enabled            = false
+  is_enabled            = true
 }
 
 resource "aws_cloudwatch_event_target" "av_update" {
