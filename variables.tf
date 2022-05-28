@@ -1,6 +1,6 @@
 variable source_bucket {
   type        = string
-  description = "Mention the bucket name. This will be used for storing the antivirus database and also it as a quarantine bucket"
+  description = "Mention the bucket name. This is the bucket where the source file is present"
 }
 
 variable prod_bucket {

@@ -270,11 +270,16 @@ def lambda_handler(event, context):
     }
 
     if scan_result == AV_STATUS_INFECTED:
-        other_bucket = s3.Bucket(AV_QUARANTINE_S3_BUCKET)
+        target_bucket = AV_QUARANTINE_S3_BUCKET
+        target_key = os.path.join(AV_QUARANTINE_S3_PREFIX, s3_object.key)
     else:
-        other_bucket = s3.Bucket(AV_PROD_S3_BUCKET)
-    obj = other_bucket.Object(AV_QUARANTINE_S3_PREFIX + '/' + s3_object.key)
-    obj.copy(copy_source)
+        target_bucket = AV_PROD_S3_BUCKET
+        target_key = s3_object.key
+    s3_client.copy_object(
+        CopySource=copy_source,
+        Bucket=target_bucket,
+        Key=target_key,
+    )
     s3_object.delete()
     stop_scan_time = get_timestamp()
     print("Script finished at %s\n" % stop_scan_time)
