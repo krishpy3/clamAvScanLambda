@@ -1,31 +1,37 @@
-resource "aws_s3_bucket" "S3BucketAVDatabase" {
-  force_destroy = true
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        sse_algorithm = "AES256"
-      }
+resource "aws_s3_bucket" "S3Bucket" {
+  for_each        =  toset(var.bucket_list)
+  bucket          = "${each.value}-bucket-${local.account_id}"
+  # force_destroy   = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "bucket" {
+  for_each   = toset(var.bucket_list)
+  bucket     = aws_s3_bucket.S3Bucket[each.value].bucket
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "AES256"
     }
   }
 }
 
 resource "aws_s3_bucket_public_access_block" "blockPublicAccess" {
-  bucket = aws_s3_bucket.S3BucketAVDatabase.id
-  block_public_acls = true
-  block_public_policy = true
-  ignore_public_acls = true
+  for_each                = toset(var.bucket_list)
+  bucket                  = aws_s3_bucket.S3Bucket[each.value].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
   restrict_public_buckets = true
 }
 
 resource "aws_iam_role" "avRole" {
-  name = "avRole"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
+  name                = "avRoleForLambda"
+  assume_role_policy  = jsonencode({
+    Version       = "2012-10-17"
+    Statement     = [
       {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Sid    = ""
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
         Principal = {
           Service = "lambda.amazonaws.com"
         }
@@ -34,11 +40,11 @@ resource "aws_iam_role" "avRole" {
   })
 
   inline_policy {
-    name = "ScanningPolicy"
+    name    = "ScanningPolicy"
 
-    policy = jsonencode({
-      Version = "2012-10-17"
-      Statement = [
+    policy  = jsonencode({
+      Version       = "2012-10-17"
+      Statement     = [
         {
           Sid      = "CloudWatchLogs"
           Effect   = "Allow"
@@ -57,9 +63,9 @@ resource "aws_iam_role" "avRole" {
             "s3:PutObject*"
           ]
           Resource = [
-            "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}/*",
-            "arn:aws:s3:::${var.source_bucket}/*",
-            "arn:aws:s3:::${var.prod_bucket}/*"
+            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["antivirus"].bucket}/*",
+            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["intake"].bucket}/*",
+            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["active"].bucket}/*"
           ]
         },
         {
@@ -68,7 +74,7 @@ resource "aws_iam_role" "avRole" {
           Action   = [
             "s3:Delete*",
           ]
-          Resource = "arn:aws:s3:::${var.source_bucket}/*"
+          Resource = "arn:aws:s3:::${aws_s3_bucket.S3Bucket["intake"].bucket}/*"
         },
         {
           Sid      = "KmsDecrypt"
@@ -77,7 +83,7 @@ resource "aws_iam_role" "avRole" {
             "kms:Decrypt"
           ]
           Resource = [
-            "arn:aws:s3:::${var.source_bucket}/*"
+            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["intake"].bucket}/*"
           ]
         },
         {
@@ -87,8 +93,8 @@ resource "aws_iam_role" "avRole" {
             "s3:ListBucket"
           ]
           Resource = [
-            "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}",
-            "arn:aws:s3:::${aws_s3_bucket.S3BucketAVDatabase.bucket}/*"
+            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["antivirus"].bucket}",
+            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["antivirus"].bucket}/*"
           ]
         },
         {
@@ -97,7 +103,7 @@ resource "aws_iam_role" "avRole" {
           Action   = [
             "sns:Publish"
           ]
-          Resource = "*"
+          Resource = aws_sns_topic.avNotificationTopic.arn
         }
       ]
     })

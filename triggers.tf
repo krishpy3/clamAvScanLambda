@@ -1,6 +1,6 @@
 ## For scanner and scanner_config
 resource "aws_s3_bucket_notification" "bucket_notification" {
-  bucket                = var.source_bucket
+  bucket                = aws_s3_bucket.S3Bucket["intake"].bucket
 
   lambda_function {
     lambda_function_arn = aws_lambda_function.avLambda.arn
@@ -15,7 +15,7 @@ resource "aws_lambda_permission" "s3InvokePermission" {
     action          = "lambda:InvokeFunction"
     function_name   = aws_lambda_function.avLambda.function_name
     principal       = "s3.amazonaws.com"
-    source_arn      = "arn:aws:s3:::${var.source_bucket}"
+    source_arn      = "arn:aws:s3:::${aws_s3_bucket.S3Bucket["intake"].bucket}"
 }
 
 ## for db update and db_config
