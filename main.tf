@@ -1,6 +1,6 @@
 resource "aws_s3_bucket" "S3Bucket" {
   for_each        =  toset(var.bucket_list)
-  bucket          = "${each.value}-bucket-${local.account_id}"
+  bucket          = "${local.buckets[each.value]}-${local.account_id}"
   # force_destroy   = true
 }
 
