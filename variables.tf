@@ -12,19 +12,16 @@ variable bucket_list {
 
 variable antivirus_bucket {
   type        = string
-  default     = "aiiianti"
   description = "Name of the bucket to store the antivirus database"
 }
 
 variable intake_bucket {
   type       = string
-  default    = "uploadpanu"
   description = "Name of the bucket to upload the files to"
 }
 
 variable active_bucket {
   type     = string
-  default  = "podaprod"
   description = "Production bucket to store the files"
 }
 
