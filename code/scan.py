@@ -13,130 +13,169 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import copy
 import json
-import os
+import errno
+import hashlib
+import datetime
+import subprocess
+
+from pytz import utc
 from urllib.parse import unquote_plus
-from distutils.util import strtobool
 
 import boto3
+import botocore
 
-import clamav
-from common import AV_DEFINITION_S3_BUCKET
-from common import AV_DEFINITION_S3_PREFIX
-from common import AV_PROD_S3_BUCKET
-from common import AV_QUARANTINE_S3_BUCKET
-from common import AV_QUARANTINE_S3_PREFIX
-from common import AV_DELETE_INFECTED_FILES
-from common import AV_PROCESS_ORIGINAL_VERSION_ONLY
-from common import AV_SCAN_START_METADATA
-from common import AV_SCAN_START_SNS_ARN
-from common import AV_SIGNATURE_METADATA
-from common import AV_STATUS_CLEAN
-from common import AV_STATUS_INFECTED
-from common import AV_STATUS_METADATA
-from common import AV_STATUS_SNS_ARN
-from common import AV_STATUS_SNS_PUBLISH_CLEAN
-from common import AV_STATUS_SNS_PUBLISH_INFECTED
-from common import AV_TIMESTAMP_METADATA
-from common import SNS_ENDPOINT
-from common import S3_ENDPOINT
-from common import create_dir
-from common import get_timestamp
+# antivirus definition bucket or quarantine bucket
+AV_DEFINITION_S3_BUCKET = os.getenv("AV_DEFINITION_S3_BUCKET")
+AV_DEFINITION_S3_PREFIX = "clamav_defs"
+AV_DEFINITION_PATH = "/tmp/" + AV_DEFINITION_S3_PREFIX
+AV_DEFINITION_FILE_PREFIXES = ["main", "daily", "bytecode"]
+AV_DEFINITION_FILE_SUFFIXES = ["cld", "cvd"]
+
+# quarantine bucket
+AV_QUARANTINE_S3_BUCKET = os.getenv("AV_QUARANTINE_S3_BUCKET")
+AV_QUARANTINE_S3_PREFIX = "infected_files"
+
+# prod bucket
+AV_PROD_S3_BUCKET = os.getenv("AV_PROD_S3_BUCKET")
 
 
-def event_object(event, event_source="s3"):
+# Files signatures are stored in S3 as a JSON object
+AV_SIGNATURE_METADATA = "av-signature"
+AV_SIGNATURE_OK = "OK"
+AV_SIGNATURE_UNKNOWN = "UNKNOWN"
 
-    # SNS events are slightly different
-    if event_source.upper() == "SNS":
-        event = json.loads(event["Records"][0]["Sns"]["Message"])
+# Return string of clamav scan output
+AV_STATUS_CLEAN = "CLEAN"
+AV_STATUS_INFECTED = "INFECTED"
+AV_STATUS_METADATA = "av-status"
+AV_STATUS_SNS_ARN = os.getenv("AV_STATUS_SNS_ARN")
 
-    # Break down the record
-    records = event["Records"]
-    if len(records) == 0:
-        raise Exception("No records found in event!")
-    record = records[0]
+AV_TIMESTAMP_METADATA = os.getenv("AV_TIMESTAMP_METADATA", "av-timestamp")
 
-    s3_obj = record["s3"]
-
-    # Get the bucket name
-    if "bucket" not in s3_obj:
-        raise Exception("No bucket found in event!")
-    bucket_name = s3_obj["bucket"].get("name", None)
-
-    # Get the key name
-    if "object" not in s3_obj:
-        raise Exception("No key found in event!")
-    key_name = s3_obj["object"].get("key", None)
-
-    if key_name:
-        key_name = unquote_plus(key_name)
-
-    # Ensure both bucket and key exist
-    if (not bucket_name) or (not key_name):
-        raise Exception(
-            "Unable to retrieve object from event.\n{}".format(event))
-
-    # Create and return the object
-    s3 = boto3.resource("s3", endpoint_url=S3_ENDPOINT)
-    return s3.Object(bucket_name, key_name)
+# common paths
+CLAMAVLIB_PATH = "/opt/python/bin"
+CLAMSCAN_PATH = "/opt/python/bin/clamscan"
+FRESHCLAM_PATH = "/opt/python/bin/freshclam"
 
 
-def verify_s3_object_version(s3, s3_object):
-    # validate that we only process the original version of a file, if asked to do so
-    # security check to disallow processing of a new (possibly infected) object version
-    # while a clean initial version is getting processed
-    # downstream services may consume latest version by mistake and get the infected version instead
-    bucket_versioning = s3.BucketVersioning(s3_object.bucket_name)
-    if bucket_versioning.status == "Enabled":
-        bucket = s3.Bucket(s3_object.bucket_name)
-        versions = list(bucket.object_versions.filter(Prefix=s3_object.key))
-        if len(versions) > 1:
-            raise Exception(
-                "Detected multiple object versions in %s.%s, aborting processing"
-                % (s3_object.bucket_name, s3_object.key)
-            )
-    else:
-        # misconfigured bucket, left with no or suspended versioning
-        raise Exception(
-            "Object versioning is not enabled in bucket %s" % s3_object.bucket_name
-        )
+# Step 1: Download the antivirus definition files from S3
 
 
-def get_local_path(s3_object, local_prefix):
-    return os.path.join(local_prefix, s3_object.bucket_name, s3_object.key)
+def update_defs_from_s3(s3_client, bucket, prefix):
+    create_dir(AV_DEFINITION_PATH)
+    to_download = {}
+    for file_prefix in AV_DEFINITION_FILE_PREFIXES:
+        s3_best_time = None
+        for file_suffix in AV_DEFINITION_FILE_SUFFIXES:
+            filename = file_prefix + "." + file_suffix
+            s3_path = os.path.join(AV_DEFINITION_S3_PREFIX, filename)
+            local_path = os.path.join(AV_DEFINITION_PATH, filename)
+            s3_md5 = md5_from_s3_tags(s3_client, bucket, s3_path)
+            s3_time = time_from_s3(s3_client, bucket, s3_path)
+
+            if s3_best_time is not None and s3_time < s3_best_time:
+                print("Not downloading older file in series: %s" % filename)
+                continue
+            else:
+                s3_best_time = s3_time
+
+            # md5 from s3
+            hash_md5 = hashlib.md5()
+            with open(local_path, "rb") as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_md5.update(chunk)
+
+            if os.path.exists(local_path) and hash_md5.hexdigest() == s3_md5:
+                print("Not downloading %s because local md5 matches s3." % filename)
+                continue
+            if s3_md5:
+                to_download[file_prefix] = {
+                    "s3_path": s3_path,
+                    "local_path": local_path,
+                }
+    return to_download
 
 
-def delete_s3_object(s3_object):
+def md5_from_s3_tags(s3_client, bucket, key):
     try:
-        s3_object.delete()
-    except Exception:
-        raise Exception(
-            "Failed to delete infected file: %s.%s"
-            % (s3_object.bucket_name, s3_object.key)
-        )
-    else:
-        print("Infected file deleted: %s.%s" %
-              (s3_object.bucket_name, s3_object.key))
+        tags = s3_client.get_object_tagging(Bucket=bucket, Key=key)["TagSet"]
+    except botocore.exceptions.ClientError as e:
+        expected_errors = {
+            "404",  # Object does not exist
+            "AccessDenied",  # Object cannot be accessed
+            "NoSuchKey",  # Object does not exist
+            "MethodNotAllowed",  # Object deleted in bucket with versioning
+        }
+        if e.response["Error"]["Code"] in expected_errors:
+            return ""
+        else:
+            raise
+    for tag in tags:
+        if tag["Key"] == "md5":
+            return tag["Value"]
+    return ""
 
 
-def set_av_metadata(s3_object, scan_result, scan_signature, timestamp):
-    content_type = s3_object.content_type
-    metadata = s3_object.metadata
-    metadata[AV_SIGNATURE_METADATA] = scan_signature
-    metadata[AV_STATUS_METADATA] = scan_result
-    metadata[AV_TIMESTAMP_METADATA] = timestamp
-    s3_object.copy(
-        {"Bucket": s3_object.bucket_name, "Key": s3_object.key},
-        ExtraArgs={
-            "ContentType": content_type,
-            "Metadata": metadata,
-            "MetadataDirective": "REPLACE",
-        },
+def time_from_s3(s3_client, bucket, key):
+    try:
+        time = s3_client.head_object(Bucket=bucket, Key=key)["LastModified"]
+    except botocore.exceptions.ClientError as e:
+        expected_errors = {"404", "AccessDenied", "NoSuchKey"}
+        if e.response["Error"]["Code"] in expected_errors:
+            return datetime.datetime.fromtimestamp(0, utc)
+        else:
+            raise
+    return time
+
+
+# Step 2: Scan the file and determine if it is infected
+
+
+def scan_file(path):
+    av_env = os.environ.copy()
+    av_env["LD_LIBRARY_PATH"] = CLAMAVLIB_PATH
+    print("Starting clamscan of %s." % path)
+    av_proc = subprocess.Popen(
+        [CLAMSCAN_PATH, "-v", "-a", "--stdout", "-d", AV_DEFINITION_PATH, path],
+        stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        env=av_env,
     )
+    output = av_proc.communicate()[0].decode()
+    print("clamscan output:\n%s" % output)
+
+    # Turn the output into a data source we can read
+    summary = scan_output_to_json(output)
+    if av_proc.returncode == 0:
+        return AV_STATUS_CLEAN, AV_SIGNATURE_OK
+    elif av_proc.returncode == 1:
+        signature = summary.get(path, AV_SIGNATURE_UNKNOWN)
+        return AV_STATUS_INFECTED, signature
+    else:
+        msg = "Unexpected exit code from clamscan: %s.\n" % av_proc.returncode
+        print(msg)
+        raise Exception(msg)
 
 
-def set_av_tags(s3_client, s3_object, scan_result, scan_signature, timestamp):
+"""Turn ClamAV Scan output into a JSON formatted data object"""
+
+
+def scan_output_to_json(output):
+    summary = {}
+    for line in output.split("\n"):
+        if ":" in line:
+            key, value = line.split(":", 1)
+            summary[key] = value.strip()
+    return summary
+
+
+# Step 3: Update the tags on the file in S3
+
+
+def set_av_tags(s3_client, s3_object, scan_result, scan_signature):
     curr_tags = s3_client.get_object_tagging(
         Bucket=s3_object.bucket_name, Key=s3_object.key
     )["TagSet"]
@@ -150,39 +189,17 @@ def set_av_tags(s3_client, s3_object, scan_result, scan_signature, timestamp):
             new_tags.remove(tag)
     new_tags.append({"Key": AV_SIGNATURE_METADATA, "Value": scan_signature})
     new_tags.append({"Key": AV_STATUS_METADATA, "Value": scan_result})
-    new_tags.append({"Key": AV_TIMESTAMP_METADATA, "Value": timestamp})
+    new_tags.append({"Key": AV_TIMESTAMP_METADATA, "Value": get_timestamp()})
     s3_client.put_object_tagging(
         Bucket=s3_object.bucket_name, Key=s3_object.key, Tagging={
             "TagSet": new_tags}
     )
 
 
-def sns_start_scan(sns_client, s3_object, scan_start_sns_arn, timestamp):
-    message = {
-        "bucket": s3_object.bucket_name,
-        "key": s3_object.key,
-        "version": s3_object.version_id,
-        AV_SCAN_START_METADATA: True,
-        AV_TIMESTAMP_METADATA: timestamp,
-    }
-    sns_client.publish(
-        TargetArn=scan_start_sns_arn,
-        Message=json.dumps({"default": json.dumps(message)}),
-        MessageStructure="json",
-    )
+# Step 4: Send sns notification
 
 
-def sns_scan_results(
-    sns_client, s3_object, sns_arn, scan_result, scan_signature, timestamp
-):
-    # Don't publish if scan_result is CLEAN and CLEAN results should not be published
-    # if scan_result == AV_STATUS_CLEAN and not str_to_bool(AV_STATUS_SNS_PUBLISH_CLEAN):
-    #     return
-    # # Don't publish if scan_result is INFECTED and INFECTED results should not be published
-    # if scan_result == AV_STATUS_INFECTED and not str_to_bool(
-    #     AV_STATUS_SNS_PUBLISH_INFECTED
-    # ):
-    #     return
+def sns_scan_results(sns_client, s3_object, sns_arn, scan_result, scan_signature):
     message = {
         "bucket": s3_object.bucket_name,
         "key": s3_object.key,
@@ -205,27 +222,50 @@ def sns_scan_results(
     )
 
 
+def create_dir(path):
+    if not os.path.exists(path):
+        try:
+            print("Attempting to create directory %s.\n" % path)
+            os.makedirs(path)
+        except OSError as exc:
+            if exc.errno != errno.EEXIST:
+                raise
+
+
+def get_timestamp():
+    return datetime.datetime.utcnow().strftime("%Y/%m/%d %H:%M:%S UTC")
+
+
+def delete_s3_object(s3_object):
+    try:
+        s3_object.delete()
+    except Exception:
+        raise Exception(
+            "Failed to delete infected file: %s.%s"
+            % (s3_object.bucket_name, s3_object.key)
+        )
+    else:
+        print("Infected file deleted: %s.%s" %
+              (s3_object.bucket_name, s3_object.key))
+
+
 def lambda_handler(event, context):
-    s3 = boto3.resource("s3", endpoint_url=S3_ENDPOINT)
-    s3_client = boto3.client("s3", endpoint_url=S3_ENDPOINT)
-    sns_client = boto3.client("sns", endpoint_url=SNS_ENDPOINT)
+    s3 = boto3.resource("s3")
+    s3_client = boto3.client("s3")
+    sns_client = boto3.client("sns")
 
-    # Get some environment variables
-    ENV = os.getenv("ENV", "")
-    EVENT_SOURCE = os.getenv("EVENT_SOURCE", "S3")
+    print("Script starting at %s\n" % (get_timestamp()))
 
-    start_time = get_timestamp()
-    print("Script starting at %s\n" % (start_time))
-    s3_object = event_object(event, event_source=EVENT_SOURCE)
-
-    if str_to_bool(AV_PROCESS_ORIGINAL_VERSION_ONLY):
-        verify_s3_object_version(s3, s3_object)
-
-    file_path = get_local_path(s3_object, "/tmp")
+    # Download the s3 file to a local lambda directory
+    bucket_name = event["Records"][0]["s3"]["bucket"]["name"]
+    key_name = unquote_plus(event["Records"][0]["s3"]["object"]["key"])
+    s3_object = s3.Object(bucket_name, key_name)
+    file_path = os.path.join("/tmp", s3_object.bucket_name, s3_object.key)
     create_dir(os.path.dirname(file_path))
     s3_object.download_file(file_path)
 
-    to_download = clamav.update_defs_from_s3(
+    # Download the AV config file to a local lambda directory
+    to_download = update_defs_from_s3(
         s3_client, AV_DEFINITION_S3_BUCKET, AV_DEFINITION_S3_PREFIX
     )
 
@@ -236,28 +276,19 @@ def lambda_handler(event, context):
               (local_path, s3_path))
         s3.Bucket(AV_DEFINITION_S3_BUCKET).download_file(s3_path, local_path)
         print("Downloading definition file %s complete!" % (local_path))
-    scan_result, scan_signature = clamav.scan_file(file_path)
-    print(
-        "Scan of s3://%s resulted in %s\n"
-        % (os.path.join(s3_object.bucket_name, s3_object.key), scan_result)
-    )
 
-    result_time = get_timestamp()
-    # Set the properties on the object with the scan results
-    if "AV_UPDATE_METADATA" in os.environ:
-        set_av_metadata(s3_object, scan_result, scan_signature, result_time)
-    set_av_tags(s3_client, s3_object, scan_result, scan_signature, result_time)
+    # Scan the file
+    scan_result, scan_signature = scan_file(file_path)
+    print("Scan of s3://%s resulted in %s\n"
+          % (os.path.join(s3_object.bucket_name, s3_object.key), scan_result)
+          )
+
+    # Update the tags on the file
+    set_av_tags(s3_client, s3_object, scan_result, scan_signature)
 
     # Publish the scan results
-    if AV_STATUS_SNS_ARN not in [None, ""]:
-        sns_scan_results(
-            sns_client,
-            s3_object,
-            AV_STATUS_SNS_ARN,
-            scan_result,
-            scan_signature,
-            result_time,
-        )
+    sns_scan_results(sns_client, s3_object, AV_STATUS_SNS_ARN,
+                     scan_result, scan_signature)
 
     # Delete downloaded file to free up room on re-usable lambda function container
     try:
@@ -283,7 +314,3 @@ def lambda_handler(event, context):
     s3_object.delete()
     stop_scan_time = get_timestamp()
     print("Script finished at %s\n" % stop_scan_time)
-
-
-def str_to_bool(s):
-    return bool(strtobool(str(s)))
