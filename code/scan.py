@@ -82,13 +82,7 @@ def update_defs_from_s3(s3_client, bucket, prefix):
             else:
                 s3_best_time = s3_time
 
-            # md5 from s3
-            hash_md5 = hashlib.md5()
-            with open(local_path, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    hash_md5.update(chunk)
-
-            if os.path.exists(local_path) and hash_md5.hexdigest() == s3_md5:
+            if os.path.exists(local_path) and md5_from_file(local_path) == s3_md5:
                 print("Not downloading %s because local md5 matches s3." % filename)
                 continue
             if s3_md5:
@@ -97,6 +91,14 @@ def update_defs_from_s3(s3_client, bucket, prefix):
                     "local_path": local_path,
                 }
     return to_download
+
+
+def md5_from_file(filename):
+    hash_md5 = hashlib.md5()
+    with open(filename, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
 
 def md5_from_s3_tags(s3_client, bucket, key):

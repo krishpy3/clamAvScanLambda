@@ -11,7 +11,7 @@ resource "aws_lambda_function" "avLambda" {
   source_code_hash  = data.archive_file.lambda.output_base64sha256
 
   runtime           = "python3.7"
-  handler           = "lambda_handler.lambda_handler"
+  handler           = "scan.lambda_handler"
   memory_size       = 1600
   timeout           = 300
 
