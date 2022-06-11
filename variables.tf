@@ -6,7 +6,7 @@ variable bucket_list {
 
 variable quarantine_bucket {
   type        = string
-  description = "Name of the bucket to store the antivirus database"
+  description = "Name of the bucket to store the infected files"
 }
 
 variable intake_bucket {
