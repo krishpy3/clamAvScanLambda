@@ -1,16 +1,10 @@
-variable cron_entry {
-  type        = string
-  default     = "cron(0 0 * * ? *)"
-  description = "Run the lambda every day at midnight to update the anti-virus database example: cron(0 0 * * ? *)"
-}
-
 variable bucket_list {
   type        = list
-  default     = ["antivirus", "intake", "active"]
+  default     = ["quarantine", "intake", "active"]
   description = "List of buckets to create"
 }
 
-variable antivirus_bucket {
+variable quarantine_bucket {
   type        = string
   description = "Name of the bucket to store the antivirus database"
 }
@@ -27,7 +21,7 @@ variable active_bucket {
 
 locals {
   buckets = {
-    antivirus = var.antivirus_bucket
+    quarantine = var.quarantine_bucket
     intake    = var.intake_bucket
     active    = var.active_bucket
   }
