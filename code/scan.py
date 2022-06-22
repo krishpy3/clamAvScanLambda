@@ -38,8 +38,8 @@ AV_DEFINITION_FILE_SUFFIXES = ["cld", "cvd"]
 AV_QUARANTINE_S3_BUCKET = os.getenv("AV_QUARANTINE_S3_BUCKET")
 AV_QUARANTINE_S3_PREFIX = "infected_files"
 
-# prod bucket
-AV_PROD_S3_BUCKET = os.getenv("AV_PROD_S3_BUCKET")
+# active bucket
+AV_ACTIVE_S3_BUCKET = os.getenv("AV_ACTIVE_S3_BUCKET")
 
 
 # Files signatures are stored in S3 as a JSON object
@@ -306,7 +306,7 @@ def lambda_handler(event, context):
         target_bucket = AV_QUARANTINE_S3_BUCKET
         target_key = os.path.join(AV_QUARANTINE_S3_PREFIX, s3_object.key)
     else:
-        target_bucket = AV_PROD_S3_BUCKET
+        target_bucket = AV_ACTIVE_S3_BUCKET
         target_key = s3_object.key
     s3_client.copy_object(
         CopySource=copy_source,

@@ -16,7 +16,7 @@ variable intake_bucket {
 
 variable active_bucket {
   type     = string
-  description = "Production bucket to store the files"
+  description = "Active bucket to store the files"
 }
 
 locals {

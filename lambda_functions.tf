@@ -21,7 +21,7 @@ resource "aws_lambda_function" "avLambda" {
     variables = {
       AV_DEFINITION_S3_BUCKET = aws_s3_bucket.S3Bucket["quarantine"].bucket
       AV_QUARANTINE_S3_BUCKET = aws_s3_bucket.S3Bucket["quarantine"].bucket
-      AV_PROD_S3_BUCKET       = aws_s3_bucket.S3Bucket["active"].bucket
+      AV_ACTIVE_S3_BUCKET     = aws_s3_bucket.S3Bucket["active"].bucket
       AV_STATUS_SNS_ARN       = aws_sns_topic.avNotificationTopic.arn
     }
   }
