@@ -1,38 +1,32 @@
-variable "cron_entry" {
-  type        = string
-  default     = "cron(0 0 * * ? *)"
-  description = "Run the lambda every day at midnight to update the anti-virus database example: cron(0 0 * * ? *)"
-}
-
 variable "bucket_list" {
   type        = list(any)
-  default     = ["antivirus", "intake", "active"]
+  default     = ["quarantine", "intake", "active"]
   description = "List of buckets to create"
 }
 
-variable "antivirus_bucket" {
+variable "quarantine_bucket" {
   type        = string
-  description = "Name of the bucket to store the antivirus database"
-  default = "antivirus_clamav"
+  description = "Name of the bucket to upload the infected files"
+  # default     = "quarantine_clamav"
 }
 
 variable "intake_bucket" {
   type        = string
   description = "Name of the bucket to upload the files to"
-  default = "intake_clamav"
+  # default     = "intake_clamav"
 }
 
 variable "active_bucket" {
   type        = string
   description = "Production bucket to store the files"
-  default = "active_clamav"
+  # default     = "active_clamav"
 }
 
 locals {
   buckets = {
-    antivirus = var.antivirus_bucket
-    intake    = var.intake_bucket
-    active    = var.active_bucket
+    quarantine = var.quarantine_bucket
+    intake     = var.intake_bucket
+    active     = var.active_bucket
   }
 }
 

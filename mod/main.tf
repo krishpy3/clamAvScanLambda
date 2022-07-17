@@ -70,7 +70,6 @@ resource "aws_iam_role" "avRole" {
             "s3:PutObject*"
           ]
           Resource = [
-            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["antivirus"].bucket}/*",
             "arn:aws:s3:::${aws_s3_bucket.S3Bucket["intake"].bucket}/*",
             "arn:aws:s3:::${aws_s3_bucket.S3Bucket["active"].bucket}/*"
           ]
@@ -91,17 +90,6 @@ resource "aws_iam_role" "avRole" {
           ]
           Resource = [
             "arn:aws:s3:::${aws_s3_bucket.S3Bucket["intake"].bucket}/*"
-          ]
-        },
-        {
-          Sid    = "S3HeadPermissions"
-          Effect = "Allow"
-          Action = [
-            "s3:ListBucket"
-          ]
-          Resource = [
-            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["antivirus"].bucket}",
-            "arn:aws:s3:::${aws_s3_bucket.S3Bucket["antivirus"].bucket}/*"
           ]
         },
         {
