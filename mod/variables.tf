@@ -7,19 +7,19 @@ variable "bucket_list" {
 variable "quarantine_bucket" {
   type        = string
   description = "Name of the bucket to upload the infected files"
-  # default     = "quarantine_clamav"
+  default     = "quarantine-clamav"
 }
 
 variable "intake_bucket" {
   type        = string
   description = "Name of the bucket to upload the files to"
-  # default     = "intake_clamav"
+  default     = "intake-clamav"
 }
 
 variable "active_bucket" {
   type        = string
   description = "Production bucket to store the files"
-  # default     = "active_clamav"
+  default     = "active-clamav"
 }
 
 locals {
